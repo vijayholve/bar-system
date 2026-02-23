@@ -1,0 +1,257 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+import webbrowser
+import tempfile
+import os
+
+
+class BarPOSApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Hotellexa - Bar Management System")
+        self.root.geometry("1200x800")
+        self.root.configure(bg="#008080")
+
+        # --- Dummy Data ---
+        # Brand Name: [Unit/Packing, Rate]
+        self.menu_data = [
+            ["ANDA BHURJI", "1", 90.00],
+            ["ANDA BHURJI CURRY", "1", 190.00],
+            ["ANDA BOILED 2PC", "1", 30.00],
+            ["ANTIQUITY WHY", "QUAR", 1500.00],
+            ["ANTIQUITY WHY", "NIP", 500.00],
+            ["ANTIQUITY WHY", "PEG_L", 170.00],
+            ["ANTIQUITY WHY", "PEG_S", 90.00]
+        ]
+
+        # Current Bill: {item_id: [Name, Packing, Qty, Rate]}
+        self.current_bill = {}
+
+        # App state
+        self.table_var = tk.StringVar()
+        self.waiter_var = tk.StringVar()
+        self.search_var = tk.StringVar()
+        self.unit_default_var = tk.StringVar()
+        self.use_unit_default = tk.BooleanVar(value=True)
+
+        # Simple waiter list
+        self.waiters = ["Select", "Waiter A", "Waiter B", "Waiter C"]
+
+        # chosen index mapping for listbox
+        self.filtered_items = []
+
+        self.create_widgets()
+        self.bind_shortcuts()
+
+        # Start flow: focus table entry
+        self.root.after(100, lambda: self.table_entry.focus())
+
+    def create_widgets(self):
+        # Top Info Bar with Table & Waiter inputs
+        top_bar = tk.Frame(self.root, bg="#008080")
+        top_bar.pack(fill="x", padx=10, pady=5)
+
+        tk.Label(top_bar, text="Table No:", font=("Arial", 12, "bold"), bg="#008080", fg="white").pack(side="left", padx=(10, 2))
+        self.table_entry = tk.Entry(top_bar, textvariable=self.table_var, width=8, font=("Arial", 12, "bold"))
+        self.table_entry.pack(side="left")
+        tk.Label(top_bar, text="(Ctrl+T)", bg="#008080", fg="white").pack(side="left", padx=(4, 12))
+
+        tk.Label(top_bar, text="Waiter:", font=("Arial", 12, "bold"), bg="#008080", fg="white").pack(side="left")
+        self.waiter_cb = ttk.Combobox(top_bar, values=self.waiters, textvariable=self.waiter_var, width=12, state="readonly")
+        self.waiter_cb.current(0)
+        self.waiter_cb.pack(side="left", padx=(4, 10))
+        tk.Label(top_bar, text="(Ctrl+W)", bg="#008080", fg="white").pack(side="left")
+
+        # Main Container
+        main_frame = tk.Frame(self.root, bg="#008080")
+        main_frame.pack(fill="both", expand=True, padx=10)
+
+        # 1. Left Section: Searchable Menu list
+        menu_frame = tk.Frame(main_frame, bg="#FFA500", bd=2, relief="ridge")
+        menu_frame.place(relx=0, rely=0, relwidth=0.35, relheight=0.8)
+
+        header = tk.Frame(menu_frame, bg="#000000")
+        header.pack(fill="x")
+        tk.Label(header, text="Brand / Item Menu", bg="#000000", fg="white", font=("Arial", 10, "bold")).pack(side="left", padx=4)
+
+        # Search box
+        search_frame = tk.Frame(menu_frame, bg="#FFA500")
+        search_frame.pack(fill="x", padx=4, pady=4)
+        tk.Label(search_frame, text="Search:", bg="#FFA500").pack(side="left")
+        self.search_entry = tk.Entry(search_frame, textvariable=self.search_var)
+        self.search_entry.pack(side="left", fill="x", expand=True, padx=(4, 4))
+        tk.Label(search_frame, text="(Ctrl+S)", bg="#FFA500").pack(side="left")
+
+        # Unit default controls
+        unit_frame = tk.Frame(menu_frame, bg="#FFA500")
+        unit_frame.pack(fill="x", padx=4)
+        tk.Checkbutton(unit_frame, text="Use Default Unit (Ctrl+U)", variable=self.use_unit_default, bg="#FFA500").pack(side="left")
+        # populate default with first item's packing
+        self.unit_default_var.set(self.menu_data[0][1])
+        self.unit_cb = ttk.Combobox(unit_frame, values=list({it[1] for it in self.menu_data}), textvariable=self.unit_default_var, width=8)
+        self.unit_cb.pack(side="left", padx=6)
+
+        # listbox for menu
+        self.menu_listbox = tk.Listbox(menu_frame, activestyle='none')
+        self.menu_listbox.pack(fill="both", expand=True, padx=4, pady=4)
+        self.menu_listbox.bind('<Double-1>', lambda e: self.add_selected_from_listbox())
+        self.menu_listbox.bind('<Return>', lambda e: self.add_selected_from_listbox())
+
+        # fill listbox
+        self.filter_menu()
+        self.search_var.trace_add('write', lambda *a: self.filter_menu())
+
+        # 2. Middle Section: Billing Table
+        bill_frame = tk.Frame(main_frame, bg="#00CED1", bd=2, relief="ridge")
+        bill_frame.place(relx=0.36, rely=0, relwidth=0.5, relheight=0.8)
+
+        columns = ("SR", "ITEM", "QTY", "RATE", "AMT")
+        self.tree = ttk.Treeview(bill_frame, columns=columns, show="headings", height=15)
+        for col in columns:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, width=80, anchor="center")
+        self.tree.column("ITEM", width=180, anchor="w")
+        self.tree.pack(fill="both", expand=True)
+
+        # 3. Right Section: Quick Actions
+        control_frame = tk.Frame(main_frame, bg="#008080")
+        control_frame.place(relx=0.87, rely=0, relwidth=0.12, relheight=0.8)
+
+        tk.Button(control_frame, text=" + QTY ", bg="green", fg="white", font=("Arial", 12, "bold"), command=lambda: self.adjust_qty(1)).pack(fill="x", pady=5)
+        tk.Button(control_frame, text=" - QTY ", bg="orange", fg="white", font=("Arial", 12, "bold"), command=lambda: self.adjust_qty(-1)).pack(fill="x", pady=5)
+        tk.Button(control_frame, text=" DELETE ", bg="red", fg="white", font=("Arial", 12, "bold"), command=self.delete_item).pack(fill="x", pady=5)
+        tk.Button(control_frame, text=" PRINT ", bg="#0044cc", fg="white", font=("Arial", 12, "bold"), command=self.print_online).pack(fill="x", pady=5)
+
+        # Bottom Total
+        self.total_lbl = tk.Label(self.root, text="GRAND TOTAL: 0", font=("Arial", 24, "bold"), bg="#000080", fg="white")
+        self.total_lbl.pack(side="bottom", fill="x", pady=5)
+
+    # ----------------- Menu / Search -----------------
+    def filter_menu(self):
+        query = self.search_var.get().strip().lower()
+        self.menu_listbox.delete(0, 'end')
+        self.filtered_items = []
+        for item in self.menu_data:
+            display = f"{item[0]} | {item[1]} | ₹{item[2]}"
+            if not query or query in item[0].lower() or query in str(item[1]).lower():
+                self.menu_listbox.insert('end', display)
+                self.filtered_items.append(item)
+
+    def add_selected_from_listbox(self):
+        sel = self.menu_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        item = self.filtered_items[idx]
+        # respect default unit if checkbox on
+        if self.use_unit_default.get():
+            item_to_add = [item[0], self.unit_default_var.get(), item[2]]
+        else:
+            item_to_add = item
+        self.add_to_bill(item_to_add)
+        # after adding, return focus to search and clear it for quick next entry
+        self.search_var.set("")
+        self.search_entry.focus()
+
+    # ----------------- Billing -----------------
+    def add_to_bill(self, item_info):
+        name_key = f"{item_info[0]}_{item_info[1]}"
+        if name_key in self.current_bill:
+            self.current_bill[name_key][2] += 1
+        else:
+            self.current_bill[name_key] = [item_info[0], item_info[1], 1, item_info[2]]
+        self.refresh_table()
+
+    def adjust_qty(self, amount):
+        selected = self.tree.selection()
+        if not selected:
+            return
+        item_text = self.tree.item(selected[0])['values'][1]
+        for key, data in list(self.current_bill.items()):
+            if data[0] in item_text:
+                data[2] += amount
+                if data[2] <= 0:
+                    del self.current_bill[key]
+                break
+        self.refresh_table()
+
+    def delete_item(self):
+        selected = self.tree.selection()
+        if not selected:
+            return
+        item_text = self.tree.item(selected[0])['values'][1]
+        for key, data in list(self.current_bill.items()):
+            if data[0] in item_text:
+                del self.current_bill[key]
+                break
+        self.refresh_table()
+
+    def refresh_table(self):
+        for i in self.tree.get_children():
+            self.tree.delete(i)
+        grand_total = 0
+        for idx, (key, val) in enumerate(self.current_bill.items(), 1):
+            name, packing, qty, rate = val
+            amt = qty * rate
+            grand_total += amt
+            self.tree.insert("", "end", values=(idx, f"{name} {packing}", qty, rate, amt))
+        self.total_lbl.config(text=f"GRAND TOTAL: {grand_total}")
+
+    # ----------------- Printing -----------------
+    def print_online(self):
+        # Create a simple HTML and open in the default browser so user can use browser's print
+        if not self.current_bill:
+            messagebox.showinfo("Print", "No items in bill to print")
+            return
+        rows = []
+        total = 0
+        for idx, (k, v) in enumerate(self.current_bill.items(), 1):
+            name, packing, qty, rate = v
+            amt = qty * rate
+            total += amt
+            rows.append(f"<tr><td>{idx}</td><td>{name} {packing}</td><td>{qty}</td><td>{rate}</td><td>{amt}</td></tr>")
+        html = f"""
+        <html><head><meta charset='utf-8'><title>Bill</title></head>
+        <body>
+        <h2>Table: {self.table_var.get()} &nbsp;&nbsp; Waiter: {self.waiter_var.get()}</h2>
+        <table border='1' cellpadding='6' cellspacing='0'>
+        <thead><tr><th>SR</th><th>ITEM</th><th>QTY</th><th>RATE</th><th>AMT</th></tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+        <tfoot><tr><td colspan='4' align='right'><b>GRAND TOTAL</b></td><td><b>{total}</b></td></tr></tfoot>
+        </table>
+        </body></html>
+        """
+        fd, path = tempfile.mkstemp(suffix='.html')
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(html)
+        webbrowser.open('file://' + path)
+
+    # ----------------- Shortcuts -----------------
+    def bind_shortcuts(self):
+        # Focus table: Ctrl+T
+        self.root.bind_all('<Control-t>', lambda e: self.table_entry.focus())
+        # Confirm table: Enter when in table -> focus waiter
+        self.table_entry.bind('<Return>', lambda e: self.waiter_cb.focus())
+        # Focus waiter: Ctrl+W
+        self.root.bind_all('<Control-w>', lambda e: self.waiter_cb.focus())
+        # Confirm waiter: Enter -> focus search
+        self.waiter_cb.bind('<Return>', lambda e: self.search_entry.focus())
+        # Focus search: Ctrl+S
+        self.root.bind_all('<Control-s>', lambda e: self.search_entry.focus())
+        # Add selected item: Ctrl+Return while searching/listbox
+        self.root.bind_all('<Control-Return>', lambda e: self.add_selected_from_listbox())
+        # Toggle unit default: Ctrl+U
+        self.root.bind_all('<Control-u>', lambda e: self.use_unit_default.set(not self.use_unit_default.get()))
+        # Qty adjustments via + and - keys (when tree focused)
+        self.root.bind_all('+', lambda e: self.adjust_qty(1))
+        self.root.bind_all('-', lambda e: self.adjust_qty(-1))
+        # Delete key to remove
+        self.root.bind_all('<Delete>', lambda e: self.delete_item())
+        # Print F10
+        self.root.bind_all('<F10>', lambda e: self.print_online())
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = BarPOSApp(root)
+    root.mainloop()
