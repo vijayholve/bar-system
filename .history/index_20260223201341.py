@@ -204,7 +204,7 @@ class BarPOSApp:
             self.orders_tree.heading(c, text=c)
             self.orders_tree.column(c, width=w, anchor='center')
         self.orders_tree.pack(fill='both', expand=True)
-        self.orders_tree.bind('<Double-1>', lambda e: self.order_actions_dialog())
+        self.orders_tree.bind('<Double-1>', lambda e: self.show_order_details())
         # configure tags for paid/unpaid
         self.orders_tree.tag_configure('paid', background='#c8f7c5')
         self.orders_tree.tag_configure('unpaid', background='#f7c5c5')
@@ -231,7 +231,6 @@ class BarPOSApp:
         fk_btn('F4 KOT', self.print_kot)
         fk_btn('F5 Clear', self.clear_blank)
         fk_btn('F6 Save', lambda: self.save_order(paid=False))
-        fk_btn('Save Paid', lambda: (self.save_order(paid=True), self.new_order()))
         fk_btn('F7 Table', lambda: self.table_entry.focus())
         fk_btn('F8 Pay', self.payment_dialog)
         fk_btn('F9 Counter', self.toggle_cash_counter)
@@ -582,89 +581,6 @@ class BarPOSApp:
         lines.append(f"\nTotal: {order['total']}")
         messagebox.showinfo(f"Order {order['id']}", "\n".join(lines))
 
-    def order_actions_dialog(self):
-        sel = self.orders_tree.selection()
-        if not sel:
-            return
-        oid = int(sel[0])
-        order = next((o for o in self.orders if o['id'] == oid), None)
-        if not order:
-            return
-
-        # create a modal dialog with buttons: View, Edit (if unpaid), Delete (if unpaid), Cancel
-        d = tk.Toplevel(self.root)
-        d.title(f"Order {oid} Actions")
-        d.transient(self.root)
-        d.grab_set()
-        tk.Label(d, text=f"Order {oid} - Table: {order['table']}  Waiter: {order['waiter']}", font=("Arial",10,"bold")).pack(padx=10, pady=8)
-
-        btn_frame = tk.Frame(d)
-        btn_frame.pack(padx=10, pady=8)
-
-        def on_view():
-            d.destroy()
-            self.show_order_details()
-
-        def on_edit():
-            d.destroy()
-            # only unpaid allowed
-            if order['paid']:
-                messagebox.showinfo('Edit', 'Paid orders cannot be edited')
-                return
-            # load order into current bill for editing
-            self.current_bill.clear()
-            for it in order['items']:
-                name, unit, qty, rate = it
-                key = f"{name}_{unit}"
-                self.current_bill[key] = [name, unit, qty, rate]
-            # remove order from list (we will let user save again)
-            try:
-                self.orders.remove(order)
-            except ValueError:
-                pass
-            try:
-                self.orders_tree.delete(str(order['id']))
-            except Exception:
-                pass
-            # populate table/waiter and refresh
-            self.table_var.set(order.get('table',''))
-            # set waiter combobox to match if exists
-            try:
-                idx = self.waiters.index(order.get('waiter','Select'))
-            except ValueError:
-                idx = 0
-            self.waiter_cb.current(idx)
-            self.refresh_table()
-            self.search_entry.focus()
-
-        def on_delete():
-            d.destroy()
-            if messagebox.askyesno('Delete', f'Confirm delete order {oid}?'):
-                try:
-                    self.orders.remove(order)
-                except ValueError:
-                    pass
-                try:
-                    self.orders_tree.delete(str(order['id']))
-                except Exception:
-                    pass
-                messagebox.showinfo('Deleted', f'Order {oid} deleted')
-
-        # View button
-        tk.Button(btn_frame, text='View', width=10, command=on_view).pack(side='left', padx=6)
-        # Edit/Delete only if unpaid
-        if not order['paid']:
-            tk.Button(btn_frame, text='Edit', width=10, command=on_edit).pack(side='left', padx=6)
-            tk.Button(btn_frame, text='Delete', width=10, command=on_delete).pack(side='left', padx=6)
-        tk.Button(btn_frame, text='Cancel', width=10, command=d.destroy).pack(side='left', padx=6)
-
-        # center dialog
-        d.update_idletasks()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - d.winfo_width()) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - d.winfo_height()) // 2
-        d.geometry(f'+{x}+{y}')
-        self.root.wait_window(d)
-
     def clear_blank(self):
         # clear search and pending area
         self.search_var.set("")
@@ -709,39 +625,6 @@ class BarPOSApp:
         messagebox.showinfo("Counter Cash", f"Counter Cash is now {state}")
 
     # ----------------- Shortcuts -----------------
-    def _escape_new_order_handler(self, event=None):
-        # Autosave current bill as a pending order (silent) and prepare UI for a new order
-        try:
-            if self.current_bill:
-                total = sum(v[2] * v[3] for v in self.current_bill.values())
-                order_id = len(self.orders) + 1
-                items = [v.copy() for v in self.current_bill.values()]
-                order = {
-                    'id': order_id,
-                    'table': self.table_var.get() or 'NA',
-                    'waiter': self.waiter_var.get() or 'NA',
-                    'items': items,
-                    'total': total,
-                    'paid': False
-                }
-                self.orders.append(order)
-                self.orders_tree.insert('', 'end', iid=str(order_id), values=(order['table'], order['waiter'], f"{total}", 'PENDING'), tags=('unpaid',))
-                # clear current bill silently
-                self.current_bill.clear()
-                self.refresh_table()
-            # prepare UI for new order: clear table, reset waiter, focus table
-            self.table_var.set("")
-            try:
-                self.waiter_cb.current(0)
-            except Exception:
-                pass
-            self.waiter_var.set(self.waiters[0] if hasattr(self, 'waiters') and self.waiters else '')
-            self.hide_pending()
-            self.search_var.set("")
-            self.table_entry.focus()
-        except Exception:
-            pass
-        return 'break'
     def bind_shortcuts(self):
         # Focus table: Ctrl+T
         self.root.bind_all('<Control-t>', lambda e: self.table_entry.focus())
@@ -774,15 +657,12 @@ class BarPOSApp:
         self.root.bind_all('<F8>', lambda e: self.payment_dialog())
         self.root.bind_all('<F9>', lambda e: self.toggle_cash_counter())
         self.root.bind_all('<F6>', lambda e: self.save_order(paid=False))
-        self.root.bind_all('<F12>', lambda e: (self.save_order(paid=True), self.new_order()))
         # New Order bindings
         self.root.bind_all('<Control-n>', lambda e: self.new_order())
         self.root.bind_all('<F11>', lambda e: self.new_order())
         # PageDown / PageUp to navigate listbox selection
         self.root.bind_all('<Next>', lambda e: self.move_listbox(1))
         self.root.bind_all('<Prior>', lambda e: self.move_listbox(-1))
-        # Escape: autosave previous order as pending and focus table for new order
-        self.root.bind_all('<Escape>', lambda e: self._escape_new_order_handler(e))
         # also bind generic key events to catch variations
         self.root.bind_all('<Key>', self._global_key_handler)
 

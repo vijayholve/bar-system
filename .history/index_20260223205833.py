@@ -231,7 +231,6 @@ class BarPOSApp:
         fk_btn('F4 KOT', self.print_kot)
         fk_btn('F5 Clear', self.clear_blank)
         fk_btn('F6 Save', lambda: self.save_order(paid=False))
-        fk_btn('Save Paid', lambda: (self.save_order(paid=True), self.new_order()))
         fk_btn('F7 Table', lambda: self.table_entry.focus())
         fk_btn('F8 Pay', self.payment_dialog)
         fk_btn('F9 Counter', self.toggle_cash_counter)

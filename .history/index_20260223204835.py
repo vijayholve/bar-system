@@ -709,39 +709,6 @@ class BarPOSApp:
         messagebox.showinfo("Counter Cash", f"Counter Cash is now {state}")
 
     # ----------------- Shortcuts -----------------
-    def _escape_new_order_handler(self, event=None):
-        # Autosave current bill as a pending order (silent) and prepare UI for a new order
-        try:
-            if self.current_bill:
-                total = sum(v[2] * v[3] for v in self.current_bill.values())
-                order_id = len(self.orders) + 1
-                items = [v.copy() for v in self.current_bill.values()]
-                order = {
-                    'id': order_id,
-                    'table': self.table_var.get() or 'NA',
-                    'waiter': self.waiter_var.get() or 'NA',
-                    'items': items,
-                    'total': total,
-                    'paid': False
-                }
-                self.orders.append(order)
-                self.orders_tree.insert('', 'end', iid=str(order_id), values=(order['table'], order['waiter'], f"{total}", 'PENDING'), tags=('unpaid',))
-                # clear current bill silently
-                self.current_bill.clear()
-                self.refresh_table()
-            # prepare UI for new order: clear table, reset waiter, focus table
-            self.table_var.set("")
-            try:
-                self.waiter_cb.current(0)
-            except Exception:
-                pass
-            self.waiter_var.set(self.waiters[0] if hasattr(self, 'waiters') and self.waiters else '')
-            self.hide_pending()
-            self.search_var.set("")
-            self.table_entry.focus()
-        except Exception:
-            pass
-        return 'break'
     def bind_shortcuts(self):
         # Focus table: Ctrl+T
         self.root.bind_all('<Control-t>', lambda e: self.table_entry.focus())

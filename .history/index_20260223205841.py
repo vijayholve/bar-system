@@ -236,6 +236,7 @@ class BarPOSApp:
         fk_btn('F8 Pay', self.payment_dialog)
         fk_btn('F9 Counter', self.toggle_cash_counter)
         fk_btn('F10 Print', self.print_online)
+        fk_btn('Save Paid', lambda: (self.save_order(paid=True), self.new_order()))
 
         # Bottom Total
         self.total_lbl = tk.Label(self.root, text="GRAND TOTAL: 0", font=("Arial", 24, "bold"), bg="#000080", fg="white")
